@@ -199,6 +199,20 @@ export function createSupabaseRepo(ctx, req, res) {
         if (error) raise(error, 'Failed to read firing profile.');
         return data ? rowToText(data, PROFILE_JSON) : undefined;
       },
+      async create(row) {
+        const { data, error } = await sb
+          .from(T_PROFILES)
+          .insert(rowToJsonb({
+            inventory_id: row.inventory_id,
+            youtube_link: row.youtube_link ?? '',
+            youtube_link_start_sec: row.youtube_link_start_sec ?? 0,
+            shot_timestamps: row.shot_timestamps ?? '[]',
+          }, PROFILE_JSON))
+          .select('id')
+          .single();
+        if (error) raise(error, 'Failed to create firing profile.');
+        return { id: data.id };
+      },
       async update(inventoryId, shotTimestampsJson) {
         const { data, error } = await sb
           .from(T_PROFILES)

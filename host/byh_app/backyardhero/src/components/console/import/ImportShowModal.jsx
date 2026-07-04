@@ -5,8 +5,10 @@ import useAppStore from "@/store/useAppStore";
 import StepsHeader from "./StepsHeader";
 import Step1SelectSource from "./Step1SelectSource";
 import Step2ResolveReceivers from "./Step2ResolveReceivers";
+import Step2ResolveInventory from "./Step2ResolveInventory";
 import Step3MatchItems from "./Step3MatchItems";
 import Step3Finalize from "./Step3Finalize";
+import NativeRestoreConfirm from "./NativeRestoreConfirm";
 import CueListModal from "./CueListModal";
 import ResolveItemsModal from "./ResolveItemsModal";
 
@@ -18,12 +20,22 @@ import {
 } from "@/util/showImport/registry";
 import { BaseShowConverter } from "@/util/showImport/BaseShowConverter";
 import { autoMatchLabels } from "@/util/showImport/itemMatch";
+import { parseByhFile, autoMatchInventory } from "@/util/showImport/byhBundle";
 
 const STEPS = [
   { id: 1, label: "Select & upload" },
   { id: 2, label: "Resolve receivers" },
   { id: 3, label: "Match items" },
   { id: 4, label: "Confirm" },
+];
+
+// Native `.byh` restore runs a shorter, distinct flow (see the `native` source
+// in the registry). It carries a whole show, so there are no cues/receivers to
+// resolve — only inventory to match or create.
+const NATIVE_STEPS = [
+  { id: 1, label: "Select & upload" },
+  { id: 2, label: "Resolve inventory" },
+  { id: 3, label: "Confirm" },
 ];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -39,6 +51,8 @@ export default function ImportShowModal({ isOpen, onClose, onImported }) {
   const systemConfig = useAppStore((s) => s.systemConfig);
   const inventory = useAppStore((s) => s.inventory);
   const inventoryById = useAppStore((s) => s.inventoryById);
+  const fetchShows = useAppStore((s) => s.fetchShows);
+  const fetchInventory = useAppStore((s) => s.fetchInventory);
 
   const protocolKeys = useMemo(
     () => Object.keys(systemConfig?.protocols || {}),
@@ -70,6 +84,11 @@ export default function ImportShowModal({ isOpen, onClose, onImported }) {
   const [itemMatches, setItemMatches] = useState({});
   const [resolveOpen, setResolveOpen] = useState(false);
 
+  // Native `.byh` restore state: the parsed bundle + per-item resolution map
+  // (bundledInventoryId -> { action:"match", existingId } | { action:"create" }).
+  const [bundle, setBundle] = useState(null);
+  const [invResolution, setInvResolution] = useState({});
+
   // Reset everything whenever the modal (re)opens.
   useEffect(() => {
     if (!isOpen) return;
@@ -90,10 +109,14 @@ export default function ImportShowModal({ isOpen, onClose, onImported }) {
     setCueModal({ open: false, key: null });
     setItemMatches({});
     setResolveOpen(false);
+    setBundle(null);
+    setInvResolution({});
   }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const source = getImportSource(sourceId);
   const type = getImportType(sourceId, typeId);
+  const isNative = !!source?.native;
+  const steps = isNative ? NATIVE_STEPS : STEPS;
 
   const allResolved = useMemo(() => {
     const recs = conversion?.receivers || [];
@@ -106,6 +129,8 @@ export default function ImportShowModal({ isOpen, onClose, onImported }) {
     setTypeId(src?.types?.[0]?.id || null);
     setFile(null);
     setProcessError(null);
+    setBundle(null);
+    setInvResolution({});
   };
 
   const handleSelectType = (id) => {
@@ -114,7 +139,35 @@ export default function ImportShowModal({ isOpen, onClose, onImported }) {
     setProcessError(null);
   };
 
+  // Native restore: read + validate the .byh in the browser, seed the
+  // inventory resolution, and advance to the resolve step. The authoritative
+  // parse happens server-side on commit.
+  const handleProcessNative = async () => {
+    if (!file) return;
+    setProcessing(true);
+    setProgress(20);
+    setProcessError(null);
+    const started = Date.now();
+    const { bundle: parsed, error } = await parseByhFile(file);
+    if (error) {
+      setProcessError(error);
+      setProgress(0);
+      setProcessing(false);
+      return;
+    }
+    setBundle(parsed);
+    setInvResolution(autoMatchInventory(parsed.inventory, inventory));
+    setName((n) => n || parsed.show?.name || deriveName(file.name));
+    const elapsed = Date.now() - started;
+    if (elapsed < 400) await sleep(400 - elapsed);
+    setProgress(100);
+    await sleep(150);
+    setStep(2);
+    setProcessing(false);
+  };
+
   const handleProcess = async () => {
+    if (isNative) return handleProcessNative();
     const converter = createConverter(sourceId, typeId);
     if (!converter || !file) return;
     setProcessing(true);
@@ -173,6 +226,40 @@ export default function ImportShowModal({ isOpen, onClose, onImported }) {
     setItemMatches((prev) => ({ ...prev, [label]: id }));
   };
 
+  const handleChangeInvResolution = (bundledId, entry) => {
+    setInvResolution((prev) => ({ ...prev, [bundledId]: entry }));
+  };
+
+  // Native restore: upload the original .byh + resolution map to the commit
+  // endpoint, then refresh the store so the restored show + any created
+  // inventory appear immediately.
+  const handleRestore = async () => {
+    if (!file) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file, file.name);
+      fd.append("resolution", JSON.stringify(invResolution));
+      if (name.trim()) fd.append("name", name.trim());
+      if (authCode.trim()) fd.append("authorization_code", authCode.trim());
+      const res = await fetch("/api/shows/import", { method: "POST", body: fd });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setSaveError(body?.error || "Failed to restore the backup.");
+        setSaving(false);
+        return;
+      }
+      await Promise.all([fetchShows?.(), fetchInventory?.()]);
+      onImported?.(body.id);
+      onClose?.();
+    } catch (e) {
+      setSaveError(e?.message || "Failed to restore the backup.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const goToMatch = () => setStep(3);
 
   const goToFinalize = () => {
@@ -219,7 +306,52 @@ export default function ImportShowModal({ isOpen, onClose, onImported }) {
     ? dbReceivers?.[cueModalResolvedId]?.label || cueModalResolvedId
     : null;
 
-  const footer = (
+  const nativeFooter = (
+    <>
+      {step === 1 ? (
+        <>
+          <Button variant="outline" onClick={onClose} disabled={processing}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            onClick={handleProcess}
+            loading={processing}
+            disabled={!file || processing}
+          >
+            Read backup
+          </Button>
+        </>
+      ) : null}
+      {step === 2 ? (
+        <>
+          <Button variant="outline" onClick={() => setStep(1)}>
+            Back
+          </Button>
+          <Button variant="primary" onClick={() => setStep(3)}>
+            Continue
+          </Button>
+        </>
+      ) : null}
+      {step === 3 ? (
+        <>
+          <Button variant="outline" onClick={() => setStep(2)} disabled={saving}>
+            Back
+          </Button>
+          <Button
+            variant="primary"
+            onClick={handleRestore}
+            loading={saving}
+            disabled={!name.trim() || saving}
+          >
+            Restore show
+          </Button>
+        </>
+      ) : null}
+    </>
+  );
+
+  const converterFooter = (
     <>
       {step === 1 ? (
         <>
@@ -274,6 +406,8 @@ export default function ImportShowModal({ isOpen, onClose, onImported }) {
     </>
   );
 
+  const footer = isNative ? nativeFooter : converterFooter;
+
   return (
     <>
       <Modal
@@ -285,7 +419,7 @@ export default function ImportShowModal({ isOpen, onClose, onImported }) {
       >
         <div className="flex flex-col gap-5">
           <StepsHeader
-            steps={STEPS}
+            steps={steps}
             current={step}
             progress={processing ? progress : null}
           />
@@ -306,7 +440,30 @@ export default function ImportShowModal({ isOpen, onClose, onImported }) {
             />
           ) : null}
 
-          {step === 2 ? (
+          {/* Native `.byh` restore flow */}
+          {isNative && step === 2 ? (
+            <Step2ResolveInventory
+              bundleInventory={bundle?.inventory}
+              resolution={invResolution}
+              onChange={handleChangeInvResolution}
+              inventory={inventory}
+            />
+          ) : null}
+
+          {isNative && step === 3 ? (
+            <NativeRestoreConfirm
+              bundle={bundle}
+              resolution={invResolution}
+              name={name}
+              onNameChange={setName}
+              authCode={authCode}
+              onAuthCodeChange={setAuthCode}
+              saveError={saveError}
+            />
+          ) : null}
+
+          {/* Converter-backed flow (Finale3D / COBRA) */}
+          {!isNative && step === 2 ? (
             <Step2ResolveReceivers
               conversion={conversion}
               resolutions={resolutions}
@@ -316,7 +473,7 @@ export default function ImportShowModal({ isOpen, onClose, onImported }) {
             />
           ) : null}
 
-          {step === 3 ? (
+          {!isNative && step === 3 ? (
             <Step3MatchItems
               conversion={conversion}
               itemMatches={itemMatches}
@@ -325,7 +482,7 @@ export default function ImportShowModal({ isOpen, onClose, onImported }) {
             />
           ) : null}
 
-          {step === 4 ? (
+          {!isNative && step === 4 ? (
             <Step3Finalize
               conversion={conversion}
               name={name}

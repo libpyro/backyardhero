@@ -10,6 +10,7 @@ import { parseAudioField } from "@/utils/audioTracks";
 import { asyncConfirm } from "@/components/common/AsyncPrompt";
 import { isImportedShow } from "@/util/showImport/isImportedShow";
 import ImportShowModal from "@/components/console/import/ImportShowModal";
+import ExportShowMenu from "@/components/console/ExportShowMenu";
 
 // Empty-state surface for the console: a clean picker for staging shows.
 // Replaces:
@@ -151,6 +152,7 @@ export default function ShowPicker({
                       Created {formatShowCreatedAt(stats.createdAt)}
                     </span>
                     <div className="flex items-center gap-1.5">
+                      <ExportShowMenu show={show} />
                       <IconButton
                         label="Delete show"
                         variant="danger"

@@ -10,6 +10,23 @@ import { CobraCsvConverter } from "./CobraCsvConverter";
 
 export const IMPORT_SOURCES = [
   {
+    // Native full-fidelity restore of a BackyardHero `.byh` backup. Unlike the
+    // converter-backed sources below, this one carries a whole show (inventory,
+    // firing profiles, racks, audio) and runs its own resolve/commit flow — the
+    // modal branches on `native`.
+    id: "byh",
+    name: "BackyardHero Backup",
+    logo: "/BYHLOGOv1.png",
+    native: true,
+    types: [
+      {
+        id: "byh",
+        label: "Backup file (.byh)",
+        accept: ".byh,.zip",
+      },
+    ],
+  },
+  {
     id: "finale3d",
     name: "Finale3D",
     // Drop the real logo at public/import-sources/finale3d.png. The source

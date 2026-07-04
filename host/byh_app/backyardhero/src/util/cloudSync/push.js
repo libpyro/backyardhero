@@ -19,6 +19,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { getQueries } from '@/util/sqldb';
+import { deepRemap, remapFusesMap, audioContentType } from '@/util/showBundle';
 import { getAuthedClient } from './client';
 import { getSyncState, setSyncState } from './state';
 
@@ -89,68 +90,11 @@ function mapInventory(row) {
   };
 }
 
-// ── Show / rack id remapping ─────────────────────────────────────────────────
-// Inventory references inside show display_payload + rack cells live under a
-// small, well-known set of keys. We remap ONLY those keys (never the ambiguous
-// `id`, which at the show-item level is a per-show sequence number, not an
-// inventory id). Fuse references are an inventory id stored as `type` on a
-// `fuse` object / inside the rack `fuses` map.
-const INV_REF_KEYS = new Set(['itemId', 'fireableItemId', 'shellId']);
-
-function remapInvId(v, invMap) {
-  if (v === null || v === undefined) return v;
-  const mapped = invMap[v] ?? invMap[String(v)];
-  return mapped ?? v;
-}
-
-function remapFuseObj(fuse, invMap) {
-  const out = deepRemap(fuse, invMap);
-  if (out && typeof out === 'object' && 'type' in out &&
-      (typeof out.type === 'number' || typeof out.type === 'string')) {
-    const mapped = invMap[out.type] ?? invMap[String(out.type)];
-    if (mapped) out.type = String(mapped);
-  }
-  return out;
-}
-
-function remapFusesMap(fuses, invMap) {
-  if (!fuses || typeof fuses !== 'object') return fuses;
-  const out = {};
-  for (const [fid, f] of Object.entries(fuses)) out[fid] = remapFuseObj(f, invMap);
-  return out;
-}
-
-function deepRemap(node, invMap) {
-  if (Array.isArray(node)) return node.map((n) => deepRemap(n, invMap));
-  if (node && typeof node === 'object') {
-    const out = {};
-    for (const [k, v] of Object.entries(node)) {
-      if (INV_REF_KEYS.has(k) && (typeof v === 'number' || typeof v === 'string')) {
-        out[k] = remapInvId(v, invMap);
-      } else if (k === 'fuse' && v && typeof v === 'object' && !Array.isArray(v)) {
-        out[k] = remapFuseObj(v, invMap);
-      } else if (k === 'fuses' && v && typeof v === 'object' && !Array.isArray(v)) {
-        out[k] = remapFusesMap(v, invMap);
-      } else {
-        out[k] = deepRemap(v, invMap);
-      }
-    }
-    return out;
-  }
-  return node;
-}
+// Inventory id remapping for show display_payload + rack cells/fuses lives in
+// @/util/showBundle (shared with the native export/import path) — imported above
+// as deepRemap / remapFusesMap.
 
 // ── Audio: read local bytes, upload to Storage, rewrite track urls ───────────
-function audioContentType(filename) {
-  const ext = path.extname(filename || '').toLowerCase();
-  if (ext === '.mp3') return 'audio/mpeg';
-  if (ext === '.wav') return 'audio/wav';
-  if (ext === '.ogg') return 'audio/ogg';
-  if (ext === '.m4a') return 'audio/mp4';
-  if (ext === '.flac') return 'audio/flac';
-  return 'application/octet-stream';
-}
-
 function readLocalAudio(filename) {
   const safe = path.basename(filename || '');
   if (!safe) return null;

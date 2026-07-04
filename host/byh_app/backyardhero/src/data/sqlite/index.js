@@ -85,6 +85,15 @@ export function createSqliteRepo(/* ctx */) {
       async getByInventoryId(inventoryId) {
         return firingProfileQueries.getByInventoryId.get(inventoryId);
       },
+      async create(row) {
+        const r = firingProfileQueries.insert.run(
+          row.inventory_id,
+          row.youtube_link ?? '',
+          row.youtube_link_start_sec ?? 0,
+          row.shot_timestamps ?? '[]',
+        );
+        return { id: r.lastInsertRowid };
+      },
       async update(inventoryId, shotTimestampsJson) {
         const r = firingProfileQueries.update.run(shotTimestampsJson, inventoryId);
         return { changes: r.changes };

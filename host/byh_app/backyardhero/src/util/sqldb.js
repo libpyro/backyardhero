@@ -423,6 +423,7 @@ export function getQueries() {
   const firingProfileQueries = {
     getByInventoryId: db.prepare(`SELECT * FROM inventoryFiringProfile WHERE inventory_id = ?`),
     getAll: db.prepare(`SELECT * FROM inventoryFiringProfile`),
+    insert: db.prepare(`INSERT INTO inventoryFiringProfile (inventory_id, youtube_link, youtube_link_start_sec, shot_timestamps) VALUES (?, ?, ?, ?)`),
     update: db.prepare(`UPDATE inventoryFiringProfile SET shot_timestamps = ? WHERE inventory_id = ?`),
     deleteByInventoryId: db.prepare(`DELETE FROM inventoryFiringProfile WHERE inventory_id = ?`),
   };

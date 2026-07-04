@@ -20,6 +20,7 @@
 //   inventory.remove(id)               -> { changes }
 //   firingProfiles.list()              -> rows[]
 //   firingProfiles.getByInventoryId(id)-> row | undefined
+//   firingProfiles.create(row)         -> { id }         (shot_timestamps = JSON string)
 //   firingProfiles.update(invId, ts)   -> { changes }   (ts = JSON string)
 //   firingProfiles.removeByInventoryId(id) -> { changes }
 //   racks.listByShow(showId)           -> rows[]
